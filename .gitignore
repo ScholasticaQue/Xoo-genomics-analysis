@@ -1,0 +1,13 @@
+# Large bioinformatics files
+data/
+*.fastq
+*.fastq.gz
+*.bam
+*.sam
+*.vcf
+*.fasta
+*.fna
+
+# temp/logs
+*.log
+*.tmp
