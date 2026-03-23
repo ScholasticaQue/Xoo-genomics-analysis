@@ -1,0 +1,8 @@
+pacbio_samples:
+  - Sexoo
+
+fastq_dir: /mnt/e/Xoo_project/fastq
+
+genome_size: 5000000
+target_coverage: 100
+threads: 8
