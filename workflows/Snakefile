@@ -1,0 +1,76 @@
+import os
+
+configfile: "config/config.yaml"
+
+SAMPLES = config["pacbio_samples"]
+FASTQ_DIR = config["fastq_dir"]
+GENOME_SIZE = config["genome_size"]
+TARGET_COV = config["target_coverage"]
+THREADS = config["threads"]
+
+############################################
+# Rule ALL
+############################################
+rule all:
+    input:
+        expand("results/assembly/{sample}/assembly.fasta", sample=SAMPLES)
+
+############################################
+# Estimate read size (total bases)
+############################################
+rule estimate_coverage:
+    input:
+        fq = lambda wc: f"{FASTQ_DIR}/{wc.sample}.fastq.gz"
+    output:
+        "results/qc/{sample}_bases.txt"
+    shell:
+        """
+        zcat {input.fq} | awk 'NR%4==2 {{sum+=length($0)}} END {{print sum}}' > {output}
+        """
+
+############################################
+# Downsample reads
+############################################
+rule downsample:
+    input:
+        fq = lambda wc: f"{FASTQ_DIR}/{wc.sample}.fastq.gz",
+        bases = "results/qc/{sample}_bases.txt"
+    output:
+        "results/downsampled/{sample}.fastq.gz"
+    run:
+        import math
+
+        with open(input.bases) as f:
+            total_bases = int(f.read().strip())
+
+        genome_size = GENOME_SIZE
+        target_cov = TARGET_COV
+
+        current_cov = total_bases / genome_size
+
+        fraction = min(1.0, target_cov / current_cov)
+
+        print(f"Sample: {wildcards.sample}")
+        print(f"Coverage: {current_cov:.2f}x")
+        print(f"Downsampling fraction: {fraction:.2f}")
+
+        shell(f"""
+            seqtk sample -s100 {input.fq} {fraction} | gzip > {output}
+        """)
+
+############################################
+# Assembly with Flye
+############################################
+rule flye:
+    input:
+        "results/downsampled/{sample}.fastq.gz"
+    output:
+        "results/assembly/{sample}/assembly.fasta"
+    threads: THREADS
+    shell:
+        """
+        flye --pacbio-raw {input} \
+             --out-dir results/assembly/{wildcards.sample} \
+             --genome-size 5m \
+             --threads {threads}
+        """
