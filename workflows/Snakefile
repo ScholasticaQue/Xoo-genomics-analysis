@@ -1,6 +1,6 @@
-import os
 
-configfile: "config/config.yaml"
+
+configfile: "/mnt/e/xoo-genomics-analysis/config/config.yaml"
 
 SAMPLES = config["pacbio_samples"]
 FASTQ_DIR = config["fastq_dir"]
@@ -13,7 +13,8 @@ THREADS = config["threads"]
 ############################################
 rule all:
     input:
-        expand("results/assembly/{sample}/assembly.fasta", sample=SAMPLES)
+        expand("results/{sample}/{sample}_busco_report/short_summary.txt", sample=SAMPLES),
+        expand("results/{sample}/spades_assembly/assembly.fasta", sample=SAMPLES)
 
 ############################################
 # Estimate read size (total bases)
@@ -73,4 +74,63 @@ rule flye:
              --out-dir results/assembly/{wildcards.sample} \
              --genome-size 5m \
              --threads {threads}
+        """
+rule racon_round1:
+    input:
+        ref = "results/{sample}/flye/assembly.fasta",
+        reads = "data/{sample}_raw_pacbio.fastq.gz"
+    output: "results/{sample}/racon/racon1.fasta"
+    threads: 8
+    shell:
+        """
+        minimap2 -x map-pb -t {threads} {input.ref} {input.reads} > {wildcards.sample}_r1.paf
+        racon -t {threads} {input.reads} {wildcards.sample}_r1.paf {input.ref} > {output}
+        rm {wildcards.sample}_r1.paf
+        """
+
+rule bwa_index:
+    input: "results/{sample}/racon/racon1.fasta"
+    output: "results/{sample}/racon/racon1.fasta.amb"
+    shell: "bwa index {input}"
+
+rule pilon_polish:
+    input:
+        ref = "results/{sample}/racon/racon1.fasta",
+        index = "results/{sample}/racon/racon1.fasta.amb",
+        r1 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_1.fq.gz",
+        r2 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_2.fq.gz"
+    output: 
+        fasta = "results/{sample}/{sample}_final_polished.fasta"
+    threads: 8
+    shell:
+        """
+        bwa mem -t {threads} {input.ref} {input.r1} {input.r2} | \
+        samtools view -u - | samtools sort -@ 4 -o {wildcards.sample}_tmp.bam
+        samtools index {wildcards.sample}_tmp.bam
+        java -Xmx24G -jar pilon.jar --genome {input.ref} --frags {wildcards.sample}_tmp.bam \
+            --output {wildcards.sample}_final_polished --outdir results/{wildcards.sample} --fix all
+        rm {wildcards.sample}_tmp.bam {wildcards.sample}_tmp.bam.bai
+        """
+
+# --- ILLUMINA PATHWAY (SPAdes) ---
+
+rule spades:
+    input:
+        r1 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_1.fq.gz",
+        r2 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_2.fq.gz"
+    output: "results/{sample}/spades_assembly/assembly.fasta"
+    threads: 8
+    shell:
+        "spades.py -1 {input.r1} -2 {input.r2} -o results/{wildcards.sample}/spades_assembly -t {threads} --only-assembler"
+
+# --- QUALITY EVALUATION ---
+
+rule busco:
+    input: "results/{sample}/{sample}_final_polished.fasta"
+    output: "results/{sample}/{sample}_busco_report/short_summary.txt"
+    threads: 4
+    shell:
+        """
+        busco -i {input} -l xanthomonadales_odb10 -o {wildcards.sample}_busco_report \
+        --out_path results/{wildcards.sample} -m genome --offline
         """
