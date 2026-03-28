@@ -1,8 +1,13 @@
 pacbio_samples:
   - Sexoo
+  - UGB003
 
-fastq_dir: /mnt/e/Xoo_project/fastq
+# Mapping PacBio samples to their corresponding Illumina prefixes
+illumina_mapping:
+  Sexoo: "BX2"
+  UGB003: "BX01"
 
+fastq_dir: "/mnt/e/Xoo_project/fastq"
 genome_size: 5000000
 target_coverage: 100
 threads: 8
