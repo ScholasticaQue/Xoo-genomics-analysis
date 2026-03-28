@@ -20,3 +20,8 @@ data/
 busco_downloads/
 pilon_out/
 flye_*/
+.snakemake/
+results/
+data/
+*.log
+.snakemake_archive/
