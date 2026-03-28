@@ -12,3 +12,11 @@ data/
 *.log
 *.tmp
 *.mmi
+*.fastq.gz
+*.fq.gz
+*.bam
+*.bai
+*.paf
+busco_downloads/
+pilon_out/
+flye_*/
