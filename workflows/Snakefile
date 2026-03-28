@@ -1,5 +1,3 @@
-
-
 configfile: "/mnt/e/xoo-genomics-analysis/config/config.yaml"
 
 SAMPLES = config["pacbio_samples"]
@@ -7,80 +5,46 @@ FASTQ_DIR = config["fastq_dir"]
 GENOME_SIZE = config["genome_size"]
 TARGET_COV = config["target_coverage"]
 THREADS = config["threads"]
+MAPPING = config["illumina_mapping"]
 
-############################################
-# Rule ALL
-############################################
 rule all:
     input:
         expand("results/{sample}/{sample}_busco_report/short_summary.txt", sample=SAMPLES),
         expand("results/{sample}/spades_assembly/assembly.fasta", sample=SAMPLES)
 
-############################################
-# Estimate read size (total bases)
-############################################
 rule estimate_coverage:
-    input:
-        fq = lambda wc: f"{FASTQ_DIR}/{wc.sample}.fastq.gz"
-    output:
-        "results/qc/{sample}_bases.txt"
-    shell:
-        """
-        zcat {input.fq} | awk 'NR%4==2 {{sum+=length($0)}} END {{print sum}}' > {output}
-        """
+    input: fq = f"{FASTQ_DIR}/{{sample}}.fastq.gz"
+    output: "results/qc/{sample}_bases.txt"
+    shell: "zcat {input.fq} | awk 'NR%4==2 {{sum+=length($0)}} END {{print sum}}' > {output}"
 
-############################################
-# Downsample reads
-############################################
 rule downsample:
     input:
-        fq = lambda wc: f"{FASTQ_DIR}/{wc.sample}.fastq.gz",
+        fq = f"{FASTQ_DIR}/{{sample}}.fastq.gz",
         bases = "results/qc/{sample}_bases.txt"
-    output:
-        "results/downsampled/{sample}.fastq.gz"
+    output: "results/downsampled/{sample}.fastq.gz"
     run:
-        import math
-
         with open(input.bases) as f:
             total_bases = int(f.read().strip())
+        current_cov = total_bases / GENOME_SIZE
+        fraction = min(1.0, TARGET_COV / current_cov)
+        shell(f"seqtk sample -s100 {input.fq} {fraction} | gzip > {output}")
 
-        genome_size = GENOME_SIZE
-        target_cov = TARGET_COV
-
-        current_cov = total_bases / genome_size
-
-        fraction = min(1.0, target_cov / current_cov)
-
-        print(f"Sample: {wildcards.sample}")
-        print(f"Coverage: {current_cov:.2f}x")
-        print(f"Downsampling fraction: {fraction:.2f}")
-
-        shell(f"""
-            seqtk sample -s100 {input.fq} {fraction} | gzip > {output}
-        """)
-
-############################################
-# Assembly with Flye
-############################################
 rule flye:
-    input:
-        "results/downsampled/{sample}.fastq.gz"
-    output:
-        "results/assembly/{sample}/assembly.fasta"
+    input: "results/downsampled/{sample}.fastq.gz"
+    output: "results/assembly/{sample}/assembly.fasta"
     threads: THREADS
     shell:
         """
-        flye --pacbio-raw {input} \
-             --out-dir results/assembly/{wildcards.sample} \
-             --genome-size 5m \
-             --threads {threads}
+        flye --pacbio-raw {input} --out-dir results/assembly/{wildcards.sample} \
+             --genome-size 5m --threads {threads}
         """
+
 rule racon_round1:
     input:
-        ref = "results/{sample}/flye/assembly.fasta",
-        reads = "data/{sample}_raw_pacbio.fastq.gz"
+        ref = "results/assembly/{sample}/assembly.fasta",
+        reads = "results/downsampled/{sample}.fastq.gz"
     output: "results/{sample}/racon/racon1.fasta"
-    threads: 8
+    threads: THREADS
     shell:
         """
         minimap2 -x map-pb -t {threads} {input.ref} {input.reads} > {wildcards.sample}_r1.paf
@@ -88,42 +52,31 @@ rule racon_round1:
         rm {wildcards.sample}_r1.paf
         """
 
-rule bwa_index:
-    input: "results/{sample}/racon/racon1.fasta"
-    output: "results/{sample}/racon/racon1.fasta.amb"
-    shell: "bwa index {input}"
-
 rule pilon_polish:
     input:
         ref = "results/{sample}/racon/racon1.fasta",
-        index = "results/{sample}/racon/racon1.fasta.amb",
-        r1 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_1.fq.gz",
-        r2 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_2.fq.gz"
-    output: 
-        fasta = "results/{sample}/{sample}_final_polished.fasta"
-    threads: 8
+        r1 = lambda w: f"{FASTQ_DIR}/{MAPPING[w.sample]}_1.fq.gz",
+        r2 = lambda w: f"{FASTQ_DIR}/{MAPPING[w.sample]}_2.fq.gz"
+    output: "results/{sample}/{sample}_final_polished.fasta"
+    threads: THREADS
     shell:
         """
+        bwa index {input.ref}
         bwa mem -t {threads} {input.ref} {input.r1} {input.r2} | \
         samtools view -u - | samtools sort -@ 4 -o {wildcards.sample}_tmp.bam
         samtools index {wildcards.sample}_tmp.bam
-        java -Xmx24G -jar pilon.jar --genome {input.ref} --frags {wildcards.sample}_tmp.bam \
-            --output {wildcards.sample}_final_polished --outdir results/{wildcards.sample} --fix all
+        pilon --genome {input.ref} --frags {wildcards.sample}_tmp.bam \
+              --output {wildcards.sample}_final_polished --outdir results/{wildcards.sample} --fix all
         rm {wildcards.sample}_tmp.bam {wildcards.sample}_tmp.bam.bai
         """
 
-# --- ILLUMINA PATHWAY (SPAdes) ---
-
 rule spades:
     input:
-        r1 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_1.fq.gz",
-        r2 = lambda w: f"data/{ILLUMINA_PREFIX[w.sample]}_2.fq.gz"
+        r1 = lambda w: f"{FASTQ_DIR}/{MAPPING[w.sample]}_1.fq.gz",
+        r2 = lambda w: f"{FASTQ_DIR}/{MAPPING[w.sample]}_2.fq.gz"
     output: "results/{sample}/spades_assembly/assembly.fasta"
-    threads: 8
-    shell:
-        "spades.py -1 {input.r1} -2 {input.r2} -o results/{wildcards.sample}/spades_assembly -t {threads} --only-assembler"
-
-# --- QUALITY EVALUATION ---
+    threads: THREADS
+    shell: "spades.py -1 {input.r1} -2 {input.r2} -o results/{wildcards.sample}/spades_assembly -t {threads} --only-assembler"
 
 rule busco:
     input: "results/{sample}/{sample}_final_polished.fasta"
