@@ -1,0 +1,153 @@
+import os
+
+SAMPLES = config["samples"]
+REF = config["reference"]
+THREADS = config["threads"]
+
+rule all:
+    input:
+        "/mnt/e/xoo-genomics-analysis/results/tree/core.treefile",
+        "/mnt/e/xoo-genomics-analysis/results/gubbins/filtered_polymorphic_sites.fasta",
+        "/mnt/e/xoo-genomics-analysis/results/distances/snp_matrix.csv",
+        "/mnt/e/xoo-genomics-analysis/results/pca/pca_plot.pdf",
+        "/mnt/e/xoo-genomics-analysis/results/roary/gene_presence_absence.csv"
+
+
+############################################
+# STEP 1: PROKKA ANNOTATION
+############################################
+rule prokka:
+    input:
+        "data/genomes/{sample}.fna"
+    output:
+        gff="/mnt/e/xoo-genomics-analysis/results/prokka/{sample}/{sample}.gff",
+        faa="/mnt/e/xoo-genomics-analysis/results/prokka/{sample}/{sample}.faa"
+    threads: THREADS
+    shell:
+        """
+        prokka {input} --outdir /mnt/e/xoo-genomics-analysis/results/prokka/{wildcards.sample} \
+               --prefix {wildcards.sample} --cpus {threads}
+        """
+
+
+############################################
+# STEP 2: SNIPPY (SNP CALLING)
+############################################
+rule snippy:
+    input:
+        ref=REF,
+        genome="data/genomes/{sample}.fna"
+    output:
+        directory("/mnt/e/xoo-genomics-analysis/results/snippy/{sample}")
+    threads: THREADS
+    shell:
+        """
+        snippy --cpus {threads} \
+               --outdir {output} \
+               --ref {input.ref} \
+               --ctgs {input.genome}
+        """
+
+
+############################################
+# STEP 3: CORE SNP ALIGNMENT
+############################################
+rule snippy_core:
+    input:
+        expand("/mnt/e/xoo-genomics-analysis/results/snippy/{sample}", sample=SAMPLES)
+    output:
+        aln="/mnt/e/xoo-genomics-analysis/results/core/core.full.aln",
+        snp="/mnt/e/xoo-genomics-analysis/results/core/core.snp.aln"
+    shell:
+        """
+        snippy-core --ref {REF} /mnt/e/xoo-genomics-analysis/results/snippy/* \
+        --prefix /mnt/e/xoo-genomics-analysis/results/core/core
+        """
+
+
+############################################
+# STEP 4: GUBBINS (REMOVE RECOMBINATION)
+############################################
+rule gubbins:
+    input:
+        "/mnt/e/xoo-genomics-analysis/results/core/core.full.aln"
+    output:
+        "/mnt/e/xoo-genomics-analysis/results/gubbins/filtered_polymorphic_sites.fasta"
+    threads: THREADS
+    shell:
+        """
+        run_gubbins.py --threads {threads} \
+        --prefix /mnt/e/xoo-genomics-analysis/results/gubbins/out {input}
+        """
+############################################
+# STEP 5: PHYLOGENY (IQ-TREE)
+############################################
+rule iqtree:
+    input:
+        "/mnt/e/xoo-genomics-analysis/results/gubbins/filtered_polymorphic_sites.fasta"
+    output:
+        "/mnt/e/xoo-genomics-analysis/results/tree/core.treefile"
+    threads: THREADS
+    shell:
+        """
+        iqtree -s {input} -m GTR+G -bb 1000 -nt {threads} \
+        -pre /mnt/e/xoo-genomics-analysis/results/tree/core
+        """
+
+
+############################################
+# STEP 6: ROARY (PANGENOME)
+############################################
+rule roary:
+    input:
+        expand("/mnt/e/xoo-genomics-analysis/results/prokka/{sample}/{sample}.gff", sample=SAMPLES)
+    output:
+        "/mnt/e/xoo-genomics-analysis/results/roary/gene_presence_absence.csv"
+    threads: THREADS
+    shell:
+        """
+        roary -e -n -v -p {threads} \
+        -f /mnt/e/xoo-genomics-analysis/results/roary \
+        {input}
+        """
+
+rule snp_distance:
+    input:
+        "/mnt/e/xoo-genomics-analysis/results/gubbins/filtered_polymorphic_sites.fasta"
+    output:
+        "/mnt/e/xoo-genomics-analysis/results/distances/snp_matrix.csv"
+    shell:
+        """
+        python scripts/snp_distance.py {input} {output}
+        """
+
+rule pca:
+    input:
+        "/mnt/e/xoo-genomics-analysis/results/distances/snp_matrix.csv"
+/mnt/e/xoo-genomics-analysis/    output:
+        "/mnt/e/xoo-genomics-analysis/results/pca/pca_plot.pdf"
+    shell:
+        """
+        Rscript scripts/pca_plot.R {input} {output}
+        """
+
+rule effectors:
+    input:
+        expand("/mnt/e/xoo-genomics-analysis/results/prokka/{sample}/{sample}.faa", sample=SAMPLES)
+    output:
+        directory("/mnt/e/xoo-genomics-analysis/results/effectors/")
+    shell:
+        """
+        bash scripts/extract_effectors.sh
+        """
+
+rule itol:
+    input:
+        "/mnt/e/xoo-genomics-analysis/results/tree/core.treefile"
+    output:
+        "/mnt/e/xoo-genomics-analysis/results/tree/itol_labels.txt"
+    run:
+        with open(output[0], "w") as f:
+            f.write("LABELS\nSEPARATOR TAB\nDATA\n")
+            for s in SAMPLES:
+                f.write(f"{s}\t{s}\n")
