@@ -1,16 +1,11 @@
-# Large bioinformatics files
+.snakemake/
+workflows/.snakemake/
+results/
 data/
-*.fastq
-*.fastq.gz
-*.bam
-*.sam
-*.vcf
-*.fasta
-*.fna
-
-# temp/logs
 *.log
-*.tmp
+*.bam
+*.bai
+*.paf
 *.mmi
 *.fastq.gz
 *.fq.gz
