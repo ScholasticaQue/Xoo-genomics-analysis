@@ -73,8 +73,12 @@ plt.savefig("figures/fig1_tale_distribution.png", dpi=300)
 # SIMULATED GENE MAPPING (placeholder)
 # replace later with BEDTOOLS output
 # ===============================
-df["gene"] = df["region"]
+mapped = pd.read_csv("results/mapped_targets.tsv", sep="\t", header=None)
+mapped.columns = ["chr","start","end","tale","gff_chr","source","feature","gff_start","gff_end","score","strand","frame","attributes"]
 
+mapped["gene"] = mapped["attributes"].str.extract('ID=([^;]+)')
+
+df = mapped
 # ===============================
 # FIGURE 2 — TOP TARGETED GENES
 # ===============================
