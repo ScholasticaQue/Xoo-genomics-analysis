@@ -20,3 +20,4 @@ results/
 data/
 *.log
 .snakemake_archive/
+*.txt
