@@ -218,6 +218,9 @@ plt.savefig("figures/fig3_heatmap.png", dpi=300)
 # ===============================
 # FIGURE 4 — NETWORK (FIXED)
 # ===============================
+# ===============================
+# FIGURE 4 — NETWORK (FIXED SAFE)
+# ===============================
 G = nx.Graph()
 
 for _, row in mapped.iterrows():
@@ -229,24 +232,32 @@ pos = nx.spring_layout(G, k=0.6, iterations=100, seed=42)
 tales = [n for n in G.nodes if "tempTALE" in n]
 genes = [n for n in G.nodes if n not in tales]
 
-key_nodes = list(key_genes_df["gene"].unique())
-core_nodes = list(core_genes)
+# SAFE filtering (FIX)
+graph_nodes = set(G.nodes())
+
+key_nodes = [g for g in key_genes_df["gene"].unique() if g in graph_nodes]
+core_nodes = [g for g in core_genes if g in graph_nodes]
 
 plt.figure(figsize=(10,10))
 
+# TALE nodes
 nx.draw_networkx_nodes(G, pos, nodelist=tales, node_size=30)
+
+# normal genes
 nx.draw_networkx_nodes(
     G, pos,
     nodelist=[g for g in genes if g not in key_nodes],
     node_size=60
 )
 
+# key genes (red)
 nx.draw_networkx_nodes(
     G, pos,
     nodelist=key_nodes,
     node_size=120
 )
 
+# core genes (outlined)
 nx.draw_networkx_nodes(
     G, pos,
     nodelist=core_nodes,
@@ -262,7 +273,6 @@ plt.title("TALE–Gene Interaction Network (Biological Highlights)")
 plt.axis("off")
 
 plt.savefig("figures/fig4_network.png", dpi=300)
-
 # ===============================
 # SAVE FINAL TABLE
 # ===============================
