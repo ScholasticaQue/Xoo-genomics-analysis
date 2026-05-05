@@ -86,7 +86,7 @@ mapped = mapped.drop_duplicates(subset=["tale","gene"])
 print("Unique TALE–gene interactions:", len(mapped))
 
 # ===============================
-# ADD GENE ANNOTATION (CRITICAL)
+# ADD GENE ANNOTATION
 # ===============================
 annot = pd.read_csv("data/annotation.tsv", sep="\t", header=None)
 annot.columns = ["gene", "gene_name"]
@@ -119,12 +119,11 @@ print(f"Core threshold: {core_threshold}")
 print("Core genes:", len(core))
 print("Accessory genes:", len(accessory))
 
-# SAVE CORE DATA
 core.to_csv("results/core_genes_list.csv")
 gene_presence.to_csv("results/gene_presence.csv")
 
 # ===============================
-# KEY GENE EXTRACTION (FIXED)
+# KEY GENE EXTRACTION
 # ===============================
 keywords = ["SWEET", "NAC", "WRKY", "BZIP"]
 
@@ -133,9 +132,6 @@ key_genes_df = mapped[
 ]
 
 key_genes_df.to_csv("results/key_gene_interactions.tsv", sep="\t", index=False)
-
-key_gene_counts = key_genes_df["gene"].value_counts()
-key_gene_counts.to_csv("results/key_gene_counts.csv")
 
 print("Key gene interactions:", len(key_genes_df))
 print("Unique key genes:", key_genes_df["gene"].nunique())
@@ -153,27 +149,43 @@ pd.Series(list(core_key)).to_csv("results/core_key_genes.txt", index=False)
 print("Core key genes:", len(core_key))
 
 # ===============================
-# CORE GENE CATEGORIZATION
 # ===============================
-core_df = pd.DataFrame({"gene": list(core_genes)})
-core_df["category"] = "unknown"
-
-for k in keywords:
-    core_df.loc[
-        core_df["gene"].isin(
-            mapped[mapped["gene_name"].str.contains(k, case=False, na=False)]["gene"]
-        ),
-        "category"
-    ] = k
-
-core_df.to_csv("results/core_gene_categories.csv", index=False)
-
+# SWEET ANALYSIS (FULL TARGETS — FIXED)
 # ===============================
-# TOP CORE GENES
-# ===============================
-core_ranked = gene_presence.loc[core.index].sort_values(ascending=False)
-core_ranked.head(20).to_csv("results/top_core_genes.csv")
 
+full_targets = pd.read_csv(
+    "results/mapped_targets.tsv",
+    sep="\t",
+    header=None
+)
+
+full_targets.columns = [
+    "chr","start","end","tale",
+    "p_chr","source","feature","g_start","g_end",
+    "dot","strand","info"
+]
+
+# extract gene_id from GFF attribute column
+full_targets["gene"] = full_targets["info"].str.extract(r"gene_id=([^;]+)")
+
+# merge annotation
+full_targets = full_targets.merge(annot, on="gene", how="left")
+
+# SWEET detection
+sweet_full = full_targets[
+    full_targets["gene_name"].str.contains("SWEET", case=False, na=False)
+].copy()
+
+print("FULL SWEET interactions:", len(sweet_full))
+print("Unique SWEET genes (full):", sweet_full["gene"].nunique())
+
+sweet_full["strain"] = sweet_full["tale"].apply(extract_strain)
+
+tale_sweet_counts = sweet_full["tale"].value_counts()
+strain_counts = sweet_full["strain"].value_counts()
+
+tale_sweet_counts.to_csv("results/tale_sweet_counts_full.csv")
+strain_counts.to_csv("results/strain_sweet_counts_full.csv")
 # ===============================
 # FIGURE 1 — DISTRIBUTION
 # ===============================
@@ -218,9 +230,6 @@ plt.savefig("figures/fig3_heatmap.png", dpi=300)
 # ===============================
 # FIGURE 4 — NETWORK (FIXED)
 # ===============================
-# ===============================
-# FIGURE 4 — NETWORK (FIXED SAFE)
-# ===============================
 G = nx.Graph()
 
 for _, row in mapped.iterrows():
@@ -232,32 +241,16 @@ pos = nx.spring_layout(G, k=0.6, iterations=100, seed=42)
 tales = [n for n in G.nodes if "tempTALE" in n]
 genes = [n for n in G.nodes if n not in tales]
 
-# SAFE filtering (FIX)
 graph_nodes = set(G.nodes())
 
-key_nodes = [g for g in key_genes_df["gene"].unique() if g in graph_nodes]
+key_nodes = [g for g in key_genes if g in graph_nodes]
 core_nodes = [g for g in core_genes if g in graph_nodes]
 
 plt.figure(figsize=(10,10))
 
-# TALE nodes
 nx.draw_networkx_nodes(G, pos, nodelist=tales, node_size=30)
-
-# normal genes
-nx.draw_networkx_nodes(
-    G, pos,
-    nodelist=[g for g in genes if g not in key_nodes],
-    node_size=60
-)
-
-# key genes (red)
-nx.draw_networkx_nodes(
-    G, pos,
-    nodelist=key_nodes,
-    node_size=120
-)
-
-# core genes (outlined)
+nx.draw_networkx_nodes(G, pos, nodelist=[g for g in genes if g not in key_nodes], node_size=60)
+nx.draw_networkx_nodes(G, pos, nodelist=key_nodes, node_size=120)
 nx.draw_networkx_nodes(
     G, pos,
     nodelist=core_nodes,
@@ -273,6 +266,26 @@ plt.title("TALE–Gene Interaction Network (Biological Highlights)")
 plt.axis("off")
 
 plt.savefig("figures/fig4_network.png", dpi=300)
+
+# ===============================
+# SWEET FIGURES (NEW 🔥)
+# ===============================
+plt.figure(figsize=(10,5))
+tale_sweet_counts.head(15).plot(kind="bar")
+plt.ylabel("Number of SWEET targets")
+plt.title("Top TALEs Targeting SWEET Genes")
+plt.xticks(rotation=90)
+plt.tight_layout()
+plt.savefig("figures/fig_sweet_tales.png", dpi=300)
+
+plt.figure(figsize=(10,5))
+strain_counts.head(15).plot(kind="bar")
+plt.ylabel("Number of SWEET interactions")
+plt.title("Strains Targeting SWEET Genes")
+plt.xticks(rotation=90)
+plt.tight_layout()
+plt.savefig("figures/fig_sweet_strains.png", dpi=300)
+
 # ===============================
 # SAVE FINAL TABLE
 # ===============================
