@@ -9,10 +9,6 @@ import re
 # HELPER FUNCTION
 # ===============================
 def extract_strain(tale_name):
-    """
-    Extract strain ID from TALE name
-    Example: 109_CSG_007-tempTALE7 → CSG_007
-    """
     match = re.search(r'_(.*?)-', tale_name)
     return match.group(1) if match else "unknown"
 
@@ -45,7 +41,7 @@ df = df.dropna(subset=["pvalue"])
 print("After cleaning:", len(df))
 
 # ===============================
-# FILTER HIGH CONFIDENCE
+# FILTER
 # ===============================
 df = df[df["pvalue"] < 1e-6].copy()
 
@@ -66,7 +62,7 @@ df["chr"] = coords.apply(lambda x: x[0])
 df["start"] = coords.apply(lambda x: x[1])
 
 # ===============================
-# FIX BINDING LENGTH
+# BINDING LENGTH
 # ===============================
 df["length"] = df["rvds"].str.count("-") + 1
 df["start"] = df["start"] + df["position"] - 1
@@ -106,6 +102,11 @@ annot.columns = ["gene", "gene_name"]
 mapped = mapped.merge(annot, on="gene", how="left")
 
 print("Annotated genes:", mapped["gene_name"].notna().sum())
+
+# ===============================
+# ADD STRAIN INFO
+# ===============================
+mapped["strain"] = mapped["tale"].apply(extract_strain)
 
 # ===============================
 # BASIC STATS
@@ -159,31 +160,41 @@ pd.Series(list(core_key)).to_csv("results/core_key_genes.txt", index=False)
 print("Core key genes:", len(core_key))
 
 # ===============================
-# FULL TARGET ANALYSIS (IMPORTANT)
+# 🔥 NEW: STRAIN × GENE MATRIX
+# ===============================
+strain_gene_matrix = pd.crosstab(mapped["strain"], mapped["gene"])
+
+strain_gene_matrix.to_csv("results/strain_gene_matrix.csv")
+
+# ===============================
+# 🔥 NEW: TALE × GENE MATRIX
+# ===============================
+tale_gene_matrix = pd.crosstab(mapped["tale"], mapped["gene"])
+tale_gene_matrix.to_csv("results/tale_gene_matrix.csv")
+
+# ===============================
+# 🔥 FULL TARGET ANALYSIS
 # ===============================
 full_targets = pd.read_csv("results/mapped_targets.tsv", sep="\t", header=None)
 
 print("mapped_targets columns:", full_targets.shape[1])
 
-# assign columns dynamically based on detected size
 if full_targets.shape[1] == 12:
     full_targets.columns = [
         "chr","start","end","tale",
         "p_chr","source","feature","g_start","g_end",
         "dot","strand","info"
     ]
-
 elif full_targets.shape[1] == 13:
     full_targets.columns = [
         "chr","start","end","tale",
         "p_chr","source","feature","g_start","g_end",
         "score","strand","phase","info"
     ]
-
 else:
-    raise ValueError("Unexpected number of columns in mapped_targets.tsv")
+    raise ValueError("Unexpected columns")
 
-# extract gene ID
+# extract gene id
 full_targets["gene"] = full_targets["info"].str.extract(r"gene_id=([^;]+)")
 
 # merge annotation
@@ -199,7 +210,6 @@ sweet_full = full_targets[
 print("FULL SWEET interactions:", len(sweet_full))
 print("Unique SWEET genes:", sweet_full["gene"].nunique())
 
-# add strain
 sweet_full["strain"] = sweet_full["tale"].apply(extract_strain)
 
 # counts
@@ -209,25 +219,14 @@ strain_counts = sweet_full["strain"].value_counts()
 tale_sweet_counts.to_csv("results/tale_sweet_counts_full.csv")
 strain_counts.to_csv("results/strain_sweet_counts_full.csv")
 
+# ===============================
+# 🔥 NEW: SWEET NETWORK TABLE
+# ===============================
+sweet_network = sweet_full[["strain","tale","gene","gene_name"]]
+sweet_network.to_csv("results/sweet_network_table.tsv", sep="\t", index=False)
 
 # ===============================
-# EXTRACT UNIQUE SWEET GENE LIST
-# ===============================
-# Identify the 3 unique locus tags for SWEET genes
-unique_sweet_ids = sweet_full["gene"].unique()
-
-# Create a clean reference list of just these genes and their names
-sweet_gene_list = sweet_full[["gene", "gene_name"]].drop_duplicates()
-
-# Save to a dedicated CSV for easy reference in your thesis
-sweet_gene_list.to_csv("results/unique_sweet_genes_list.csv", index=False)
-
-print("Unique SWEET genes identified:")
-print(sweet_gene_list)
-
-print(sweet_full["gene_name"].value_counts())
-# ===============================
-# FIGURE 1
+# FIGURES
 # ===============================
 plt.figure()
 gene_presence.hist(bins=50)
@@ -235,18 +234,7 @@ plt.title("Distribution of TALE Targeting per Gene")
 plt.savefig("figures/fig1_distribution.png", dpi=300)
 
 # ===============================
-# FIGURE 2
-# ===============================
-top_genes = gene_counts.head(20)
-
-plt.figure(figsize=(10,5))
-top_genes.plot(kind="bar")
-plt.title("Top 20 Most Targeted Genes")
-plt.tight_layout()
-plt.savefig("figures/fig2_top_genes.png", dpi=300)
-
-# ===============================
-# FIGURE 3 HEATMAP
+# HEATMAP
 # ===============================
 top30 = gene_counts.head(30).index
 
@@ -264,7 +252,7 @@ plt.title("TALE–Gene Interaction Heatmap")
 plt.savefig("figures/fig3_heatmap.png", dpi=300)
 
 # ===============================
-# FIGURE 4 NETWORK (FIXED)
+# NETWORK
 # ===============================
 G = nx.Graph()
 
@@ -274,47 +262,9 @@ for _, row in mapped.iterrows():
 
 pos = nx.spring_layout(G, seed=42)
 
-tales = [n for n in G.nodes if "tempTALE" in n]
-genes = [n for n in G.nodes if n not in tales]
-
-graph_nodes = set(G.nodes())
-
-key_nodes = [g for g in key_genes if g in graph_nodes]
-core_nodes = [g for g in core_genes if g in graph_nodes]
-
 plt.figure(figsize=(10,10))
-
-nx.draw_networkx_nodes(G, pos, nodelist=tales, node_size=30)
-nx.draw_networkx_nodes(G, pos, nodelist=genes, node_size=60)
-nx.draw_networkx_nodes(G, pos, nodelist=key_nodes, node_size=120)
-nx.draw_networkx_nodes(G, pos, nodelist=core_nodes,
-                       node_size=150, node_color="none",
-                       edgecolors="black")
-
-nx.draw_networkx_edges(G, pos, alpha=0.3)
-
+nx.draw(G, pos, node_size=20)
 plt.title("TALE–Gene Network")
-plt.axis("off")
 plt.savefig("figures/fig4_network.png", dpi=300)
-
-# ===============================
-# SWEET FIGURES
-# ===============================
-plt.figure(figsize=(10,5))
-tale_sweet_counts.head(15).plot(kind="bar")
-plt.title("Top TALEs Targeting SWEET Genes")
-plt.tight_layout()
-plt.savefig("figures/fig_sweet_tales.png", dpi=300)
-
-plt.figure(figsize=(10,5))
-strain_counts.head(15).plot(kind="bar")
-plt.title("Strains Targeting SWEET Genes")
-plt.tight_layout()
-plt.savefig("figures/fig_sweet_strains.png", dpi=300)
-
-# ===============================
-# SAVE FINAL
-# ===============================
-mapped.to_csv("results/final_tale_gene_interactions.tsv", sep="\t", index=False)
 
 print("Pipeline complete")
