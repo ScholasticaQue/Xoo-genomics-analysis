@@ -163,11 +163,25 @@ print("Core key genes:", len(core_key))
 # ===============================
 full_targets = pd.read_csv("results/mapped_targets.tsv", sep="\t", header=None)
 
-full_targets.columns = [
-    "chr","start","end","tale",
-    "p_chr","source","feature","g_start","g_end",
-    "dot","strand","info"
-]
+print("mapped_targets columns:", full_targets.shape[1])
+
+# assign columns dynamically based on detected size
+if full_targets.shape[1] == 12:
+    full_targets.columns = [
+        "chr","start","end","tale",
+        "p_chr","source","feature","g_start","g_end",
+        "dot","strand","info"
+    ]
+
+elif full_targets.shape[1] == 13:
+    full_targets.columns = [
+        "chr","start","end","tale",
+        "p_chr","source","feature","g_start","g_end",
+        "score","strand","phase","info"
+    ]
+
+else:
+    raise ValueError("Unexpected number of columns in mapped_targets.tsv")
 
 # extract gene ID
 full_targets["gene"] = full_targets["info"].str.extract(r"gene_id=([^;]+)")
@@ -195,6 +209,23 @@ strain_counts = sweet_full["strain"].value_counts()
 tale_sweet_counts.to_csv("results/tale_sweet_counts_full.csv")
 strain_counts.to_csv("results/strain_sweet_counts_full.csv")
 
+
+# ===============================
+# EXTRACT UNIQUE SWEET GENE LIST
+# ===============================
+# Identify the 3 unique locus tags for SWEET genes
+unique_sweet_ids = sweet_full["gene"].unique()
+
+# Create a clean reference list of just these genes and their names
+sweet_gene_list = sweet_full[["gene", "gene_name"]].drop_duplicates()
+
+# Save to a dedicated CSV for easy reference in your thesis
+sweet_gene_list.to_csv("results/unique_sweet_genes_list.csv", index=False)
+
+print("Unique SWEET genes identified:")
+print(sweet_gene_list)
+
+print(sweet_full["gene_name"].value_counts())
 # ===============================
 # FIGURE 1
 # ===============================
